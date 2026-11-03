@@ -1,7 +1,7 @@
 [
 null,
-{"id":1,"expanded":false,"name":"Intro sequence","order":3,"parentId":2,"scrollX":571,"scrollY":397,"quick":false},
-{"id":2,"expanded":false,"name":"title","order":1,"parentId":0,"scrollX":0,"scrollY":0,"quick":false},
+{"id":1,"expanded":true,"name":"Intro sequence","order":3,"parentId":2,"scrollX":571,"scrollY":397,"quick":false},
+{"id":2,"expanded":true,"name":"title","order":1,"parentId":0,"scrollX":0,"scrollY":0,"quick":false},
 {"id":3,"expanded":false,"name":"DevStuff","order":19,"parentId":0,"scrollX":0,"scrollY":0,"quick":false},
 {"id":4,"expanded":true,"name":"TestMap","order":21,"parentId":3,"scrollX":0,"scrollY":0,"quick":false},
 {"id":5,"expanded":false,"name":"PointAndClick","order":22,"parentId":3,"scrollX":571,"scrollY":397,"quick":false},
