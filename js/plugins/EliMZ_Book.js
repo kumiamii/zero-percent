@@ -7,7 +7,7 @@
 @orderAfter DotMoveSystem
 @orderAfter DotMoveSystem_FunctionEx
 
-@plugindesc ♦6.4.0♦ Essential plugin for all Eli plugins.
+@plugindesc ♦6.6.0♦ Essential plugin for all Eli plugins.
 @author Hakuen Studio
 @url https://docs.google.com/document/d/1ckAG8ESh6U47Eje2QZ6oajv-cRcsdUJUmRS7PvOseBc/edit?usp=sharing
 
@@ -30,8 +30,10 @@ https://hakuenstudio.itch.io/eli-book-rpg-maker-mv-mz/community
 
 ● Core Plugin for Eli Plugins
 ● Check if you have outdated versions of other Eli plugins
-● Shows newly released Eli plugins during playtest
+● Shows new releases and updates of other Eli plugins during playtest
 ● Improves the error log so you can understand better what is happening
+● Adds passive commands: Event commands can be executed on page switch
+even if the event is not starting.
 ● Provides some engine changes:
 - Can remove scroll bars for games with small screen size
 - Can disable Effekseer
@@ -50,9 +52,15 @@ https://hakuenstudio.itch.io/eli-book-rpg-maker-mv-mz/community
 @default true
 
 @param showNewReleases
-@text Show New Plugin Releases
+@text Show New Releases
 @type boolean
-@desc Show newly released Eli plugins for seven days after their release date.
+@desc Show newly released Eli plugins not active in the project for seven days after publication.
+@default true
+
+@param showNews
+@text Show News
+@type boolean
+@desc Show recent updates of Eli plugins not active in the project for seven days after publication.
 @default true
 
 @param updateErrorPrinter
@@ -78,6 +86,18 @@ https://hakuenstudio.itch.io/eli-book-rpg-maker-mv-mz/community
 @type struct<developerSt>
 @desc Play test settings.
 @default {"gameFocus":"false","enableGameWindowPosition":"false","alignX":"left","offsetX":"10","alignY":"top","offsetY":"10","openDevTools":"false","quickRestart":"true","startFps":"false"}
+
+@command cmd_beginPassiveCommands
+@text Begin Passive Commands
+@desc Start a passive block until End Passive Commands or the end of the event page.
+
+@command cmd_endPassiveCommands
+@text End Passive Commands
+@desc Finish a passive command block on a map event page.
+
+@command cmd_tempPassiveCommand
+@text Temp Passive Command
+@desc Mark only the immediately following event command as passive.
 
 */
 
@@ -1961,10 +1981,24 @@ Eli.PluginManager = {
 	currentEventId: 0,
 	currentCommonEventId: 0,
 	currentInterpreter: null,
-	passivePluginCommands: [],
-	passivePluginCommandPrefix: "cmdPassive_",
 	currentPassiveEvent: null,
-
+	isPreparingMapEvents: false,
+	queuedPassiveCommands: new Map(),
+	passivePageLists: new WeakMap(),
+	passiveCommandsNeedRestore: false,
+	passiveCommandCodes: new Set([
+		121, 122, 123, 124, 125, 126, 127, 128, 129, 132, 133, 134, 135, 136, 137, 138, 139, 140,
+		311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 324, 325, 326,
+		202, 203, 211, 212, 213, 216, 217, 323,
+		223, 224, 225, 231, 232, 233, 234, 235, 236,
+		241, 242, 243, 244, 245, 246, 249, 250, 251,
+		281, 283, 285, 355, 357
+	]),
+	passiveMarkers: {
+		cmd_beginPassiveCommands: "begin",
+		cmd_endPassiveCommands: "end",
+		cmd_tempPassiveCommand: "temp"
+	},
 	getCurrentInterpreter(){
 		return this.currentInterpreter
 	},
@@ -1993,38 +2027,168 @@ Eli.PluginManager = {
 		this.currentPassiveEvent = event
 	},
 
-	isPassivePluginCommand(command){
-		return command?.code === 357 && command.parameters[1].startsWith(this.passivePluginCommandPrefix)
+	getPassiveMarker(command){
+		if(command.code === 357 && Utils.extractFileName(command.parameters[0]) === "EliMZ_Book"){
+			return this.passiveMarkers[command.parameters[1]] || ""
+		}
+
+		return ""
 	},
 
-	clearPassivePluginCommands(){
-		this.passivePluginCommands.length = 0
+	isPassiveMarkerCommand(params){
+		return Utils.extractFileName(params[0]) === "EliMZ_Book" && !!this.passiveMarkers[params[1]]
 	},
 
-	collectPassivePluginCommand(command){
-		if(this.isPassivePluginCommand(command)){
-			this.passivePluginCommands.push(command)
+	collectPassiveCommands(event, execute = true, list = event.page()?.list || []){
+		const eventId = event.eventId()
+		const skipped = new Set()
+		const commands = []
+		const continuations = {101: 401, 105: 405, 108: 408, 205: 505, 302: 605, 355: 655}
+		const branches = {102: 404, 111: 412, 112: 413, 301: 604}
+		let inBlock = false
+		let nextPassive = false
+
+		for(let i = 0; i < list.length; i++){
+			const command = list[i]
+			const marker = command.indent === 0 ? this.getPassiveMarker(command) : ""
+
+			if(marker){
+				skipped.add(i)
+				nextPassive = false
+
+				if(marker === "begin"){
+					inBlock = true
+
+				}else if(marker === "end"){
+					inBlock = false
+
+				}else if(!inBlock){
+					nextPassive = true
+				}
+
+				continue
+			}
+
+			if(command.code === 0){
+				break
+			}
+
+			if(inBlock || nextPassive){
+				const allowed = command.indent === 0 && this.passiveCommandCodes.has(command.code)
+				const continuation = continuations[command.code]
+				const branchEnd = branches[command.code]
+
+				skipped.add(i)
+
+				if(allowed){
+					commands.push(command)
+				}
+
+				if(continuation){
+					while(list[i + 1]?.code === continuation){
+						i++
+						skipped.add(i)
+
+						if(allowed){
+							commands.push(list[i])
+						}
+					}
+
+				}else if(!allowed && branchEnd){
+					while(list[i + 1] && (list[i + 1].indent > command.indent || list[i + 1].code !== branchEnd)){
+						i++
+						skipped.add(i)
+					}
+
+					if(list[i + 1]?.code === branchEnd && list[i + 1].indent === command.indent){
+						i++
+						skipped.add(i)
+					}
+				}
+			}
+
+			nextPassive = false
+		}
+
+		this.passivePageLists.set(list, {eventId, mapId: event._mapId, skipped})
+
+		if(execute && commands.length > 0){
+			if(this.isPreparingMapEvents){
+				this.queuedPassiveCommands.set(eventId, {event, pageIndex: event._pageIndex, commands})
+			}else{
+				this.runPassiveCommands(eventId, commands)
+			}
 		}
 	},
 
-	hasPassivePluginCommands(){
-		return this.passivePluginCommands.length > 0
-	},
+	trackLoadedPassivePages(restoreCommands = false){
+		for(const event of $gameMap.events()){
+			const list = event.page()?.list
 
-	checkPassivePluginCommands(eventId){
-		if(this.hasPassivePluginCommands()){
-			this.runPassivePluginCommands(eventId)
+			if(list && (restoreCommands || !this.passivePageLists.has(list))){
+				this.collectPassiveCommands(event, restoreCommands, list)
+			}
+
+			const interpreter = event._interpreter
+
+			if(interpreter?._list && !this.passivePageLists.has(interpreter._list)){
+				this.collectPassiveCommands(event, false, interpreter._list)
+			}
+		}
+
+		const interpreter = $gameMap._interpreter
+
+		if(interpreter?._list && interpreter._eventId > 0 && !this.passivePageLists.has(interpreter._list)){
+			const event = $gameMap.event(interpreter._eventId)
+
+			if(event){
+				this.collectPassiveCommands(event, false, interpreter._list)
+			}
 		}
 	},
 
-	runPassivePluginCommands(eventId){
-		const interpreter = new Eli.Game_PassivePluginCommandInterpreter()
-		const list = this.passivePluginCommands
+	shouldSkipPassiveCommand(interpreter){
+		const data = this.passivePageLists.get(interpreter._list)
 
-		list.push({code: 0, indent: 0, parameters: []})
+		return !!data && data.mapId === interpreter._mapId && data.eventId === interpreter._eventId && data.skipped.has(interpreter._index)
+	},
+
+	runPassiveCommands(eventId, commands){
+		const interpreter = new Eli.Game_PassiveInterpreter()
+		const list = [...commands, {code: 0, indent: 0, parameters: []}]
+		const previousInterpreter = this.currentInterpreter
+		const previousEventId = this.currentEventId
+		const previousCommonEventId = this.currentCommonEventId
+
 		interpreter.setup(list, eventId)
-		interpreter.update()
-		this.clearPassivePluginCommands()
+		interpreter.setPluginCommandInterpreter()
+		interpreter.runPassiveCommands()
+
+		this.currentInterpreter = previousInterpreter
+		this.currentEventId = previousEventId
+		this.currentCommonEventId = previousCommonEventId
+	},
+
+	runQueuedPassiveCommands(){
+		const queue = this.queuedPassiveCommands
+
+		for(const [eventId, entry] of [...queue]){
+			if(queue.get(eventId) !== entry){
+				continue
+			}
+
+			queue.delete(eventId)
+
+			const {event, pageIndex, commands} = entry
+
+			if($gameMap.event(eventId) === event && !event._erased && event._pageIndex === pageIndex && event.findProperPageIndex() === pageIndex){
+				const previousEvent = this.currentPassiveEvent
+
+				this.setPassiveEvent(event)
+				this.runPassiveCommands(eventId, commands)
+				this.setPassiveEvent(previousEvent)
+			}
+		}
 	},
 
 	registerCommands(plugin, commands, name){
@@ -3150,8 +3314,11 @@ ${updateBodyId}::-webkit-scrollbar-button{
 
 	checkAndWarn(versionList){
 		try{
-			const outdatedList = Eli.Book.getParam().checkVersion ? this.getOutdatedPlugins(versionList) : []
-			const newReleaseList = Eli.Book.getParam().showNewReleases ? this.getNewPluginReleases(versionList) : []
+			this.cleanDismissedReleases(versionList)
+
+			const param = Eli.Book.getParam()
+			const outdatedList = param.checkVersion ? this.getOutdatedPlugins(versionList) : []
+			const newReleaseList = param.showNewReleases || param.showNews ? this.getNewPluginReleases(versionList) : []
 
 			this.setOutdatedList(outdatedList)
 			this.setNewReleaseList(newReleaseList)
@@ -3203,11 +3370,12 @@ ${updateBodyId}::-webkit-scrollbar-button{
 	getNewPluginReleases(versionList, currentTime = Date.now()){
 		const releases = []
 		const dismissedReleases = this.readDismissedReleases()
+		const param = Eli.Book.getParam()
 
 		for(const pluginName in versionList){
 			const data = this.getPluginDataFromVersionList(versionList, pluginName)
 
-			if(!this.isNewPluginRelease(pluginName, data, currentTime, dismissedReleases)) continue
+			if(!this.isNewPluginRelease(pluginName, data, currentTime, dismissedReleases, param)) continue
 
 			releases.push({
 				name: pluginName,
@@ -3221,13 +3389,13 @@ ${updateBodyId}::-webkit-scrollbar-button{
 		return releases
 	},
 
-	isNewPluginRelease(pluginName, data, currentTime, dismissedReleases){
+	isNewPluginRelease(pluginName, data, currentTime, dismissedReleases, param){
 		return pluginName.startsWith("EliMZ_") &&
 			data &&
-			this.isInitialReleaseVersion(data.version) &&
+			(this.isInitialReleaseVersion(data.version) ? param.showNewReleases : param.showNews) &&
 			this.isReleaseDateActive(data.releaseDate, currentTime) &&
-			!this.isPluginAdded(pluginName) &&
-			!this.isReleaseDismissed(pluginName, dismissedReleases)
+			!this.isPluginActive(pluginName) &&
+			!this.isReleaseDismissed(pluginName, data.version.join("."), dismissedReleases)
 	},
 
 	readDismissedReleases(){
@@ -3241,16 +3409,27 @@ ${updateBodyId}::-webkit-scrollbar-button{
 			if(data && typeof data === "object" && !Array.isArray(data)){
 				return data
 			}else{
+				localStorage.removeItem(this.dismissedReleaseStorageKey)
 				return {}
 			}
 		}catch(error){
+			try{
+				localStorage.removeItem(this.dismissedReleaseStorageKey)
+			}catch(storageError){
+			}
+
 			return {}
 		}
 	},
 
 	writeDismissedReleases(data){
 		try{
-			localStorage.setItem(this.dismissedReleaseStorageKey, JSON.stringify(data))
+			if(Object.keys(data).length > 0){
+				localStorage.setItem(this.dismissedReleaseStorageKey, JSON.stringify(data))
+			}else{
+				localStorage.removeItem(this.dismissedReleaseStorageKey)
+			}
+
 			return true
 		}catch(error){
 			console.error("Eli Version Manager: release dismiss data could not be saved", error)
@@ -3258,13 +3437,42 @@ ${updateBodyId}::-webkit-scrollbar-button{
 		}
 	},
 
-	isReleaseDismissed(pluginName, dismissedReleases = this.readDismissedReleases()){
-		return dismissedReleases[pluginName] === true
+	cleanDismissedReleases(versionList, currentTime = Date.now()){
+		const dismissedReleases = this.readDismissedReleases()
+		let changed = false
+
+		for(const pluginName of Object.keys(dismissedReleases)){
+			const data = this.getPluginDataFromVersionList(versionList, pluginName)
+
+			if(!data || !this.isReleaseDateActive(data.releaseDate, currentTime) || this.isPluginActive(pluginName)){
+				delete dismissedReleases[pluginName]
+				changed = true
+			}else{
+				const version = data.version.join(".")
+				const savedVersion = dismissedReleases[pluginName]
+
+				if(savedVersion === true && this.isInitialReleaseVersion(data.version)){
+					dismissedReleases[pluginName] = version
+					changed = true
+				}else if(savedVersion !== version){
+					delete dismissedReleases[pluginName]
+					changed = true
+				}
+			}
+		}
+
+		if(changed){
+			this.writeDismissedReleases(dismissedReleases)
+		}
 	},
 
-	dismissRelease(pluginName){
+	isReleaseDismissed(pluginName, version, dismissedReleases = this.readDismissedReleases()){
+		return dismissedReleases[pluginName] === version
+	},
+
+	dismissRelease(pluginName, version){
 		const dismissedReleases = this.readDismissedReleases()
-		dismissedReleases[pluginName] = true
+		dismissedReleases[pluginName] = version
 		this.writeDismissedReleases(dismissedReleases)
 	},
 
@@ -3305,8 +3513,8 @@ ${updateBodyId}::-webkit-scrollbar-button{
 		}
 	},
 
-	isPluginAdded(pluginName){
-		return $plugins.some(plugin => this.getPluginEntryName(plugin) === pluginName)
+	isPluginActive(pluginName){
+		return $plugins.some(plugin => plugin.status && this.getPluginEntryName(plugin) === pluginName)
 	},
 
 	getPluginEntryName(plugin){
@@ -3810,11 +4018,11 @@ ${updateBodyId}::-webkit-scrollbar-button{
 	},
 
 	createNewReleaseSection(releases){
-		const section = this.createOverlaySection("New Plugin Releases", releases.length, "NewReleaseSection")
+		const section = this.createOverlaySection("News", releases.length, "NewReleaseSection")
 		const list = this.createNewReleaseList(releases)
 
 		if(releases.length === 0){
-			list.appendChild(this.createOverlayEmptyMessage("No new releases.", "NewReleaseEmptyMessage"))
+			list.appendChild(this.createOverlayEmptyMessage("No news.", "NewReleaseEmptyMessage"))
 		}
 
 		section.appendChild(list)
@@ -3978,7 +4186,7 @@ ${updateBodyId}::-webkit-scrollbar-button{
 	createNewReleaseDateLabel(){
 		const label = document.createElement("span")
 		label.className = "eliVersionManagerNewReleaseDateLabel"
-		label.textContent = "Released: "
+		label.textContent = "Published: "
 
 		return label
 	},
@@ -4062,7 +4270,7 @@ ${updateBodyId}::-webkit-scrollbar-button{
 	},
 
 	onNewReleaseDismissButton(item){
-		this.dismissRelease(item.name)
+		this.dismissRelease(item.name, item.version)
 		this.removeNewRelease(item.name)
 		this.removeNewReleaseItemElement(item.name)
 
@@ -4100,7 +4308,7 @@ ${updateBodyId}::-webkit-scrollbar-button{
 		}
 
 		if(releaseTitle){
-			releaseTitle.textContent = `New Plugin Releases (${this.getNewReleaseList().length})`
+			releaseTitle.textContent = `News (${this.getNewReleaseList().length})`
 		}
 	},
 
@@ -4110,7 +4318,7 @@ ${updateBodyId}::-webkit-scrollbar-button{
 
 		if(this.getNewReleaseList().length === 0){
 			if(list && !oldMessage){
-				list.appendChild(this.createOverlayEmptyMessage("No new releases.", "NewReleaseEmptyMessage"))
+				list.appendChild(this.createOverlayEmptyMessage("No news.", "NewReleaseEmptyMessage"))
 			}
 		}else if(oldMessage){
 			oldMessage.remove()
@@ -4914,7 +5122,7 @@ ${updateBodyId}::-webkit-scrollbar-button{
 		const element = document.createElement("span")
 		element.id = this.ui.mainId + "UpdateLogLabel"
 		element.className = "eliVersionManagerUpdateLogLabel"
-		element.textContent = this.isReleaseDetails(item) ? "Release Details" : "Update Log"
+		element.textContent = this.isReleaseDetails(item) ? "News Details" : "Update Log"
 		this.setUpdateLogLabelStyle(element)
 
 		return element
@@ -5034,7 +5242,7 @@ ${updateBodyId}::-webkit-scrollbar-button{
 		footer.className = "eliVersionManagerOverlayFooter"
 		this.setOverlayFooterStyle(footer)
 		const updateWarn = "If you are sure it is updated, refresh the plugin entry on the Plugin Manager window(Right-click on entry → refresh)."
-		const canDisable = "You can disable plugin updates and new releases on the EliMZ_Book plugin parameters."
+		const canDisable = "You can disable plugin updates, new releases, and news in the EliMZ_Book plugin parameters."
 		footer.textContent = updateWarn + "\n" + canDisable
 
 		return footer
@@ -5319,31 +5527,24 @@ body{
 
 		if(interpreter){
 			const commandName = this.getCommandName(interpreter.code)
-			let text = ""
-			let firstLine = ""
+			let text = `Map ID: ${interpreter.mapId} | Event ID: ${interpreter.eventId} | Common Event ID: ${interpreter.commonEventId} | Troop ID: ${interpreter.troopId}` + "\n"
+			text += `Event Page: ${interpreter.eventPage} | Troop Page: ${interpreter.troopPage}` + "\n"
 
-			if(interpreter._commonEventId > 0){
-				firstLine += `Map ID: ${interpreter.mapId} | Common Event ID: ${interpreter._commonEventId}` + "\n"
-			}else{
-				const event = $gameMap.event(interpreter.eventId)
-				firstLine += `Map ID: ${interpreter.mapId} | Event ID: ${interpreter.eventId}`
-
-				if(event){
-					firstLine += ` | Page: ${event._pageIndex + 1}`
-				}
-
-				firstLine += "\n"
+			if(interpreter.commonEventName){
+				text += `Common Event: ${interpreter.commonEventName}` + "\n"
 			}
 
-			text += firstLine
+			if(interpreter.troopName){
+				text += `Troop: ${interpreter.troopName}` + "\n"
+			}
 
 			if(interpreter.code === 357){
-				const [pluginName, functionName, pluginCmdName, list] = interpreter.parameters
+				const [pluginName, functionName, pluginCmdName] = interpreter.parameters
 				text += `Command: ${commandName} | Index: ${interpreter.index}` + "\n"
 				text += `${pluginName} - ${pluginCmdName}`
 
 			}else{
-				text += `Command: ${commandName} | Index:${interpreter.index}`
+				text += `Command: ${commandName} | Index: ${interpreter.index}`
 			}
 
 			text += "\n"
@@ -5351,6 +5552,7 @@ body{
 			if(interpreter.scriptLine){
 				text += `Script: ${interpreter.scriptLine}` + "\n"
 			}
+
 			ctxBody.textContent = text
 		}else{
 			ctxBody.textContent = "No interpreter context available."
@@ -5537,10 +5739,50 @@ body{
 		element.style.textAlign = "right"
 	},
 
+	getEventPage(interpreter){
+		const mainInterpreter = interpreter.getMainInterpreter() || interpreter
+
+		if(mainInterpreter._eventId > 0 && mainInterpreter._mapId === $gameMap.mapId()){
+			const event = $gameMap.event(mainInterpreter._eventId)
+
+			if(event){
+				if(event._pageIndex >= 0 && event.list() === mainInterpreter._list){
+					return event._pageIndex + 1
+				}
+
+				return event.event().pages.findIndex(page => page.list === mainInterpreter._list) + 1
+			}
+		}
+
+		return 0
+	},
+
+	getTroopPage(interpreter){
+		if($gameParty.inBattle() && $gameTroop._troopId > 0){
+			const mainInterpreter = interpreter.getMainInterpreter() || interpreter
+
+			if(mainInterpreter === $gameTroop._interpreter){
+				const pageIndex = $gameTroop.troop().pages.findIndex(page => page.list === mainInterpreter._list)
+
+				return pageIndex + 1
+			}
+		}
+
+		return 0
+	},
+
 	setInterpreter(interpreter, command){
+		const commonEventId = interpreter._commonEventId || 0
+		const troopId = $gameParty.inBattle() ? $gameTroop._troopId : 0
 		const info = {
 			mapId: interpreter._mapId,
 			eventId: interpreter._eventId,
+			commonEventId,
+			troopId,
+			eventPage: this.getEventPage(interpreter),
+			troopPage: this.getTroopPage(interpreter),
+			commonEventName: $dataCommonEvents[commonEventId]?.name || "",
+			troopName: $dataTroops[troopId]?.name || "",
 			index: interpreter._index,
 			code: command?.code ?? 0,
 			indent: command?.indent ?? 0,
@@ -5562,99 +5804,36 @@ body{
 
 Eli.Game_PassiveInterpreter = class Game_PassiveInterpreter extends Game_Interpreter{
 
-		setup(list, eventId) {
-			this.clear()
-			this._mapId = $gameMap.mapId()
-			this._eventId = eventId || 0
-			this._list = list
+	updateWait(){
+		return false
+	}
+
+	setWaitMode(){}
+
+	wait(){}
+
+	runPassiveCommands(){
+		while(this.isRunning()){
+			this.executeCommand()
 		}
-
-		updateWait() {return false}
-		command101(){return false}
-		command102(){ return false }
-		command103(){ return false }
-		command104(){ return false }
-		command105(){ return false }
-		command124(){ return false }
-		command136(){ return true }
-		command201(){ return true }
-		command202(){ return true }
-		command203(){ return true }
-		command204(){ return true }
-		command205(){ return true }
-		command206() { return true }
-		command211(){ return true }
-		command212() { return true }
-		command213() { return true }
-		command214() { return true }
-		command216(){ return true }
-		command217(){ return true }
-		command221() { return true }
-		command222() { return true }
-		command223() { return true }
-		command224() { return true }
-		command225() { return true }
-		command230() { return true }
-		command231(){ return true }
-		command232(){ return true }
-		command233(){ return true }
-		command234(){ return true }
-		command235(){ return true }
-		command236(){ return true }
-		command241(){ return true }
-		command242(){ return true }
-		command243(){ return true }
-		command244(){ return true }
-		command245(){ return true }
-		command246(){ return true }
-		command249(){ return true }
-		command250(){ return true }
-		command251(){ return true }
-		command261(){ return true }
-		command281(){ return true }
-		command282(){ return true }
-		command284(){ return true }
-		command301(params) { return true }
-		command302(params) { return true }
-		command303(params) { return true }
-		command322(params) { return true }
-		command323(params) { return true }
-		command337(params) { return true }
-		command339(params) { return true }
-		command340() { return true }
-		command351() { return true }
-		command352() { return true }
-		command353() { return true }
-		command354() { return true }
-}
-
-Eli.Game_PassivePluginCommandInterpreter = class Game_PassivePluginCommandInterpreter extends Eli.Game_PassiveInterpreter{
+	}
 
 	executeCommand(){
 		const command = this.currentCommand()
-		let canContinue = true
 
 		if(command){
 			this._indent = command.indent
 			const methodName = "command" + command.code
+			const method = this[methodName]
 
-			if(typeof this[methodName] === "function"){
-				canContinue = this[methodName](command.parameters)
+			if(typeof method === "function"){
+				method.call(this, command.parameters)
 			}
 
-			if(canContinue){
-				this._index++
-			}
+			this._index++
 		}else{
 			this.terminate()
 		}
-
-		return canContinue
-	}
-
-	command357(params){
-		this.setPluginCommandInterpreter()
-		PluginManager.callCommand(this, Utils.extractFileName(params[0]), params[1], params[3])
 
 		return true
 	}
@@ -5667,6 +5846,7 @@ Eli.Book = {
 		constructor(parameters){
 			this.checkVersion = parameters.checkVersion === "true"
 			this.showNewReleases = parameters.showNewReleases === "true"
+			this.showNews = (parameters.showNews ?? "true") === "true"
 			this.updateErrorPrinter = parameters.updateErrorPrinter === "true"
 			this.iterateEventList = parameters.iterateEventList === "true"
 			this.engine = this.parseEngine(JSON.parse(parameters.engine))
@@ -5701,8 +5881,9 @@ Eli.Book = {
 	},
 
 	initialize(){
-		Eli.VersionManager.register("EliMZ_Book", "6.4.0")
+		Eli.VersionManager.register("EliMZ_Book", "6.6.0")
 		this.initParameters()
+		this.initPluginCommands()
 		this.setDocumentStyle()
 		window.addEventListener("load", this.onWindowLoad.bind(this))
 	},
@@ -5711,6 +5892,17 @@ Eli.Book = {
 		const parameters = PluginManager.parameters("EliMZ_Book")
 		this.parameters = new this.Parameters(parameters)
 	},
+
+	initPluginCommands(){
+		const commands = ["cmd_beginPassiveCommands", "cmd_endPassiveCommands", "cmd_tempPassiveCommand"]
+		Eli.PluginManager.registerCommands(this, commands, "EliMZ_Book")
+	},
+
+	cmd_beginPassiveCommands(){},
+
+	cmd_endPassiveCommands(){},
+
+	cmd_tempPassiveCommand(){},
 
 	setDocumentStyle(){
 		if(this.getEngineParam().styleOverflow){
@@ -5724,7 +5916,7 @@ Eli.Book = {
 
 	isVersionManagerEnabled(){
 		const param = this.getParam()
-		return param.checkVersion || param.showNewReleases
+		return param.checkVersion || param.showNewReleases || param.showNews
 	},
 
 	getEngineParam(){
@@ -6567,6 +6759,7 @@ DataManager.extractSaveContents = function(contents) {
 	Alias.DataManager_extractSaveContents.call(this, contents)
 	$eliData = contents.eli
 	$gameMap.restoreMainInterpreters()
+	Eli.PluginManager.passiveCommandsNeedRestore = true
 }
 
 /* ----------------------------- CONFIG MANAGER ----------------------------- */
@@ -6749,7 +6942,14 @@ BattleManager.isRandomBattle = function(){
 /* -------------------------------- GAME MAP -------------------------------- */
 Alias.Game_Map_setupEvents = Game_Map.prototype.setupEvents
 Game_Map.prototype.setupEvents = function(){
+	const manager = Eli.PluginManager
+
+	manager.queuedPassiveCommands.clear()
+	manager.isPreparingMapEvents = true
+
 	Alias.Game_Map_setupEvents.call(this)
+
+	manager.isPreparingMapEvents = false
 	this.tempParallelCommonEventsToRemove = []
 }
 
@@ -6762,7 +6962,10 @@ Game_Map.prototype.startTemporaryCommonEvent = function(commonEventId){
 	commonEvent.tempParallelCommonEvent = true
 	commonEvent.refresh()
 
-	this.tempParallelCommonEventsToRemove ||= []
+	if(!this.tempParallelCommonEventsToRemove){
+		this.tempParallelCommonEventsToRemove = []
+	}
+
 	this._commonEvents.push(commonEvent)
 
 	return commonEvent
@@ -6901,6 +7104,13 @@ Game_Follower.prototype.getGlobalKey = function(forActor) {
 }
 
 /* ------------------------------- GAME EVENT ------------------------------- */
+Alias.Game_Event_setupPage = Game_Event.prototype.setupPage
+Game_Event.prototype.setupPage = function(){
+	Eli.PluginManager.queuedPassiveCommands.delete(this.eventId())
+
+	Alias.Game_Event_setupPage.call(this)
+}
+
 Alias.Game_Event_initialize = Game_Event.prototype.initialize
 Game_Event.prototype.initialize = function(mapId, eventId) {
 	this._mapId = mapId
@@ -6963,14 +7173,17 @@ Game_Event.prototype.extractEliMetaData = function(){
 Game_Event.prototype.afterSetupPage = function(){}
 
 Game_Event.prototype.checkListIteration = function(){
-	Eli.PluginManager.clearPassivePluginCommands()
+	const manager = Eli.PluginManager
+	const previousEvent = manager.currentPassiveEvent
+
+	manager.setPassiveEvent(this)
 
 	if(this.canIterateList()){
-		Eli.PluginManager.setPassiveEvent(this)
 		this.startIterateList()
 	}
 
 	this.afterListIteration()
+	manager.setPassiveEvent(previousEvent)
 }
 
 Game_Event.prototype.hasIterateListNote = function(){
@@ -6982,7 +7195,6 @@ Game_Event.prototype.canIterateList = function(){
 }
 
 Game_Event.prototype.startIterateList = function(){
-	Eli.PluginManager.clearPassivePluginCommands()
 	const list = this.list() || []
 
 	for(let i = 0; i < list.length; i++){
@@ -6991,14 +7203,11 @@ Game_Event.prototype.startIterateList = function(){
 }
 
 Game_Event.prototype.onListIteration = function(index, list = this.list() || []){
-	Eli.PluginManager.collectPassivePluginCommand(list[index])
-
 	return index
 }
 
 Game_Event.prototype.afterListIteration = function(){
-	Eli.PluginManager.checkPassivePluginCommands(this.eventId())
-	Eli.PluginManager.setPassiveEvent(null)
+	Eli.PluginManager.collectPassiveCommands(this)
 }
 
 Game_Event.prototype.getSpriteId = function() {
@@ -7245,18 +7454,25 @@ Game_Interpreter.prototype.command301_NotInBattle = function(params) {
 	BattleManager.setCommandEventBattleTrigger()
 }
 
-Alias.Game_Interpreter_command357 = Game_Interpreter.prototype.command357
-Game_Interpreter.prototype.command357 = function(params){
-	let result = true
-
-	if(params[1].startsWith(Eli.PluginManager.passivePluginCommandPrefix)){
-		result = true
-	}else{
-		this.setPluginCommandInterpreter()
-		result = Alias.Game_Interpreter_command357.call(this, params)
+Alias.Game_Interpreter_executePassiveCommand = Game_Interpreter.prototype.executeCommand
+Game_Interpreter.prototype.executeCommand = function(){
+	if(Eli.PluginManager.shouldSkipPassiveCommand(this)){
+		this._index++
+		return true
 	}
 
-	return result
+	return Alias.Game_Interpreter_executePassiveCommand.call(this)
+}
+
+Alias.Game_Interpreter_command357 = Game_Interpreter.prototype.command357
+Game_Interpreter.prototype.command357 = function(params){
+	if(Eli.PluginManager.isPassiveMarkerCommand(params)){
+		return true
+	}
+
+	this.setPluginCommandInterpreter()
+
+	return Alias.Game_Interpreter_command357.call(this, params)
 }
 
 Game_Interpreter.prototype.setPluginCommandInterpreter = function(){
@@ -7397,6 +7613,18 @@ Scene_Boot.prototype.processDataStates = function(data, index){}
 Scene_Boot.prototype.processDataTilesets = function(data, index){}
 
 /* -------------------------------- SCENE MAP ------------------------------- */
+Alias.Scene_Map_onMapLoaded = Scene_Map.prototype.onMapLoaded
+Scene_Map.prototype.onMapLoaded = function(){
+	Alias.Scene_Map_onMapLoaded.call(this)
+
+	const manager = Eli.PluginManager
+	const restoreCommands = manager.passiveCommandsNeedRestore && !this._transfer
+
+	manager.passiveCommandsNeedRestore = false
+	manager.trackLoadedPassivePages(restoreCommands)
+	manager.runQueuedPassiveCommands()
+}
+
 Alias.Scene_Map_start = Scene_Map.prototype.start
 Scene_Map.prototype.start = function() {
 	if(this._transfer){
