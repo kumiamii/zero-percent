@@ -1,0 +1,123 @@
+{
+    "type": "screen",
+    "childrens": [
+        {
+            "type": "plane",
+            "id": "_backgroundImage",
+            "parameters": {
+                "imageName": "frame",
+                "margins": 60,
+                "folderName": "PKD_MessageHistory"
+            },
+            "bindings": {
+                "size": {
+                    "width": "100%",
+                    "height": "100%"
+                }
+            }
+        },
+        {
+            "type": "image",
+            "id": "_titleImage",
+            "parameters": {
+                "imageName": "title",
+                "folderName": "PKD_MessageHistory",
+                "keepAspect": false,
+                "useAspectSize": false
+            },
+            "bindings": {
+                "size": {
+                    "width": "423hdp",
+                    "height": "83hdp"
+                },
+                "position": {
+                    "x": "center",
+                    "y": 0
+                }
+            }
+        },
+        {
+            "type": "image",
+            "id": "_emptyHistoryImage",
+            "parameters": {
+                "width": "auto",
+                "height": "auto",
+                "imageName": "noMessages",
+                "folderName": "PKD_MessageHistory",
+                "keepAspect": false,
+                "useAspectSize": false
+            },
+            "bindings": {
+                "visible": "$isEmptyHistory",
+                "position": {
+                    "x": "center",
+                    "y": "center"
+                }
+            }
+        },
+        {
+            "type": "list",
+            "id": "_messageList",
+            "parameters": {
+                "maxCols": 1,
+                "isHaveSelectionEffect": true,
+                "selectionEffects": ["glow;distance:8;outerStrength:2"],
+                "scaleItemsWidth": false,
+                "scaleItemsHeight": false,
+                "isDrawDefaultItemBack": false,
+                "defaultItemHeight": 0,
+                "backgroundType": 2,
+                "itemsPadding": 12,
+                "isHaveInOutAnimation": true,
+                "isHorizontal": false,
+                "inAnimation": "field:x;duration:0.15;keyframes:0=0,100=4",
+                "outAnimation": "field:x;duration:0.15;keyframes:0=4,100=0"
+            },
+            "bindings": {
+                "size": {
+                    "width": "730hdp",
+                    "height": "100% - 140hdp"
+                },
+                "position": {
+                    "x": "center",
+                    "y": "100hdp"
+                }
+            }
+        },
+        {
+            "type": "imageButton",
+            "id": "_closeButton",
+            "parameters": {
+                "folderName": "PKD_MessageHistory",
+                "imageName": "closeButton",
+                "hoverImageName": "",
+                "pressedImageName": "",
+                "disabledImageName": "",
+                "isCheckAlpha": true,
+                "clickSe": "Cursor1",
+                "desaturateWhenDisabled": false,
+                "tint": "",
+                "tintAlpha": 0.5,
+                "overTint": "#c9601e",
+                "overTintAlpha": 0.25,
+                "activeTint": "",
+                "activeTintAlpha": 0.5,
+                "disabledTint": "",
+                "disabledTintAlpha": 0.5,
+                "keyboardKey": "",
+                "keyboardHandled": true,
+                "enabled": true
+            },
+            "bindings": {
+                "position": {
+                    "x": "right",
+                    "y": 0
+                },
+                "size": {
+                    "width": "66hdp",
+                    "height": "68hdp"
+                }
+            }
+        }
+    ]
+}

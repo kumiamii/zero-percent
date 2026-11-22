@@ -1,0 +1,117 @@
+{
+    "type": "plane",
+    "id": "_backgroundImage",
+    "constants": {
+        "historyMessageFontName": "",
+        "historyMessageFontSize": 22,
+        "historyMessageLineHeight": 34,
+        "historyMessageWindowBackgroundType": 2
+    },
+    "parameters": {
+        "imageName": "messageFrame",
+        "margins": 72,
+        "folderName": "PKD_MessageHistory"
+    },
+    "bindings": {
+        "size": {
+            "width": "700hdp",
+            "height": "200hdp"
+        }
+    },
+    "childrens": [
+        {
+            "type": "rect",
+            "id": "_nameRect",
+            "createIf": "$isHaveName",
+            "parameters": {
+                "corners": 8,
+                "fillGradient": null,
+                "gradientStart": { "x": 0, "y": 0 },
+                "gradientEnd": { "x": 0, "y": 100 },
+                "fillColor": "#D4905D",
+                "fillAlpha": 1,
+                "strokeWidth": 2,
+                "strokeColor": "#B67E57",
+                "strokeAlpha": 1
+            },
+            "bindings": {
+                "size": {
+                    "width": "120hdp",
+                    "height": "28hdp"
+                },
+                "position": {
+                    "x": "20hdp",
+                    "y": "18hdp"
+                }
+            },
+            "childrens": [
+                {
+                    "type": "text",
+                    "id": "_nameText",
+                    "effects": [{
+                        "type": "outline",
+                        "settings": {
+                            "color": "#1A0A06",
+                            "alpha": 0.1
+                        }
+                    }],
+                    "parameters": {
+                        "alignment": "center",
+                        "font": {
+                            "face": null,
+                            "size": 17,
+                            "italic": false,
+                            "bold": false,
+                            "weight": 500
+                        },
+                        "margins": { "x": 0, "y": 0 },
+                        "outline": { "color": "#000000", "width": 0 },
+                        "textColor": "#ECD1AB",
+                        "multiline": false,
+                        "verticalCentered": true,
+                        "actualWidth": false,
+                        "actualHeight": false
+                    },
+                    "bindings": {
+                        "size": {
+                            "width": "100%",
+                            "height": "100%"
+                        },
+                        "text": "$speakerName"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "face",
+            "id": "_faceSprite",
+            "createIf": "$isHaveFace",
+            "parameters": {
+                "mirror": true
+            },
+            "bindings": {
+                "faceSize": "120hdp",
+                "position": {
+                    "x": "20hdp",
+                    "y": "48hdp"
+                },
+                "faceIndex": "$faceIndex",
+                "faceName": "$faceName"
+            }
+        },
+        {
+            "type": "group",
+            "id": "_textContainer",
+            "bindings": {
+                "size": {
+                    "width": "100% - prevWidth - 42hdp",
+                    "height": "90% - 6hdp"
+                },
+                "position": {
+                    "x": "prevEndX + 10hdp",
+                    "y": "12hdp"
+                }
+            }
+        }
+    ]
+}

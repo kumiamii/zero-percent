@@ -1,0 +1,40 @@
+{
+    "type": "screen",
+    "childrens": [
+        {
+            "type": "imageButton",
+            "id": "_button",
+            "parameters": {
+                "folderName": "PKD_MessageHistory",
+                "imageName": "historyButton",
+                "hoverImageName": "",
+                "pressedImageName": "",
+                "disabledImageName": "",
+                "isCheckAlpha": true,
+                "clickSe": "Cursor1",
+                "desaturateWhenDisabled": false,
+                "tint": "",
+                "tintAlpha": 0.5,
+                "overTint": "#c9601e",
+                "overTintAlpha": 0.25,
+                "activeTint": "",
+                "activeTintAlpha": 0.5,
+                "disabledTint": "",
+                "disabledTintAlpha": 0.5,
+                "keyboardKey": "",
+                "keyboardHandled": true,
+                "enabled": true
+            },
+            "bindings": {
+                "size": {
+                    "width": 56,
+                    "height": 56
+                },
+                "position": {
+                    "x": "right - 4",
+                    "y": 64
+                }
+            }
+        }
+    ]
+}
